@@ -1,0 +1,33 @@
+{
+  "name": "withdrawal-authorization-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Withdrawal Authorization Service: authenticates, converts, checks funds and authorises USD withdrawals.",
+  "main": "dist/src/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/server.js",
+    "dev": "tsx watch --clear-screen=false --include \"sql/**/*.sql\" src/server.ts",
+    "test": "node --test --test-concurrency=1 \"dist/tests/**/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "decimal.js": "^10.5.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.15.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3"
+  }
+}

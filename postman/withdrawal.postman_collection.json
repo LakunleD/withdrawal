@@ -1,0 +1,621 @@
+{
+  "info": {
+    "name": "withdrawal",
+    "_postman_id": "4f6b0d2e-8d1a-4c47-9d0e-6a1d5b7c2f10",
+    "description": "Requests for the Withdrawal Authorization Service.\n\n**Run order:** Health → Auth → Accounts → Withdrawals. Login stores `accessToken` (account routes resolve the account from it; `accountId` is saved for reference). Creating a withdrawal stores `withdrawalId` and `idempotencyKey`.\n\n**Funding:** there is no deposit API. Before the Withdrawals folder, fund the account (see README):\n\n```\ndocker compose exec db psql -U withdrawal -d withdrawal -c \"UPDATE accounts SET balance_usd = 1000.00 WHERE user_id = (SELECT id FROM users WHERE email = 'alice@example.com');\"\n```\n\nChange the `email` collection variable if you want a different user.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "email",
+      "value": "alice@example.com"
+    },
+    {
+      "key": "password",
+      "value": "correct-horse-battery"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "accountId",
+      "value": ""
+    },
+    {
+      "key": "withdrawalId",
+      "value": ""
+    },
+    {
+      "key": "idempotencyKey",
+      "value": ""
+    },
+    {
+      "key": "nextCursor",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK and database reachable', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.eql({ status: 'ok', database: 'ok' });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Creates the user and a zero-balance USD account in one transaction. Returns 409 if the email is already registered, which is fine when re-running the collection."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created, or 409 if the user already exists', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('account starts at 0.00 USD', () => {",
+                  "    pm.expect(body.account.balance_usd).to.eql('0.00');",
+                  "    pm.expect(body.account.user_id).to.eql(body.user.id);",
+                  "  });",
+                  "  pm.collectionVariables.set('accountId', body.account.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Returns a 15-minute JWT. The test script stores it in `accessToken` (used by the collection's Bearer auth) and the user's account ID in `accountId`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK with a Bearer token', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.token_type).to.eql('Bearer');",
+                  "  pm.expect(body.access_token).to.be.a('string');",
+                  "  pm.collectionVariables.set('accessToken', body.access_token);",
+                  "  pm.collectionVariables.set('accountId', body.account_id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Accounts",
+      "item": [
+        {
+          "name": "Get account",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK with a decimal-string USD balance', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('accountId'));",
+                  "  pm.expect(body.currency).to.eql('USD');",
+                  "  pm.expect(body.balance_usd).to.match(/^\\d+\\.\\d{2}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Withdrawals",
+      "description": "Requires a funded account (at least ~300 USD).",
+      "item": [
+        {
+          "name": "Create withdrawal (EUR)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": \"125.50\",\n  \"target_currency\": \"EUR\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/withdrawals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                "withdrawals"
+              ]
+            },
+            "description": "A fresh Idempotency-Key is generated before each send and saved so the next request can replay it."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created and authorised', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('authorised');",
+                  "  pm.expect(body.amount_usd).to.eql('125.50');",
+                  "  pm.expect(body.target_currency).to.eql('EUR');",
+                  "  pm.expect(body.authorisation_code).to.match(/^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/);",
+                  "  pm.expect(body.converted_amount).to.match(/^\\d+\\.\\d{2}$/);",
+                  "  pm.collectionVariables.set('withdrawalId', body.id);",
+                  "});",
+                  "pm.test('not a replay', () => {",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('false');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry withdrawal (same Idempotency-Key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": \"125.50\",\n  \"target_currency\": \"EUR\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/withdrawals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                "withdrawals"
+              ]
+            },
+            "description": "Identical retry: returns the original authorisation without debiting again."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with the original withdrawal', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('withdrawalId'));",
+                  "});",
+                  "pm.test('marked as a replay', () => {",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reuse Idempotency-Key with different amount (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": \"1.00\",\n  \"target_currency\": \"EUR\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/withdrawals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                "withdrawals"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 IDEMPOTENCY_KEY_CONFLICT', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('IDEMPOTENCY_KEY_CONFLICT');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create withdrawal (JPY, zero decimals)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": \"50.00\",\n  \"target_currency\": \"JPY\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/withdrawals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                "withdrawals"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with a whole-yen converted amount', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().converted_amount).to.match(/^\\d+$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create withdrawal (USD, no conversion)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": \"20.00\",\n  \"target_currency\": \"USD\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/withdrawals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                "withdrawals"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with exchange rate 1', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.exchange_rate).to.eql('1');",
+                  "  pm.expect(body.converted_amount).to.eql('20.00');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get withdrawal",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/withdrawals/{{withdrawalId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                "withdrawals",
+                "{{withdrawalId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the stored withdrawal', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('withdrawalId'));",
+                  "  pm.expect(body.exchange_rate).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List withdrawals (first page)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/withdrawals?limit=2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                "withdrawals"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "2",
+                  "description": "1-100, default 20"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with newest-first page', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.data).to.be.an('array').with.length.at.most(2);",
+                  "  const times = body.data.map((w) => w.created_at);",
+                  "  pm.expect(times).to.eql([...times].sort().reverse());",
+                  "});",
+                  "pm.collectionVariables.set('nextCursor', pm.response.json().next_cursor || '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List withdrawals (next page)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/withdrawals?limit=2&cursor={{nextCursor}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                "withdrawals"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "2"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{nextCursor}}",
+                  "description": "next_cursor from the previous page"
+                }
+              ]
+            },
+            "description": "Skipped automatically when the previous page had no next_cursor."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('nextCursor') && pm.execution && pm.execution.skipRequest) {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the following page', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

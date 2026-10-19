@@ -1,0 +1,95 @@
+name: withdrawal
+
+# App settings come from .env (see .env.example) with local-development fallbacks
+# so `docker compose up --build -d` works out of the box.
+#
+# The database credentials are fixed here on purpose: the database is a local
+# development container published on 127.0.0.1 only, and PostgreSQL only
+# reads POSTGRES_PASSWORD when it initialises an empty volume, so making it
+# configurable invites mismatches. Use managed credentials for any real deployment.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: withdrawal
+      POSTGRES_PASSWORD: withdrawal_dev_password
+      POSTGRES_DB: withdrawal
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Published on localhost only, for local tools such as DBeaver or psql.
+    ports:
+      - "127.0.0.1:${DB_PORT:-4539}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U withdrawal -d withdrawal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      target: runtime
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://withdrawal:withdrawal_dev_password@db:5432/withdrawal
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-jwt-secret-change-me-0123456789}
+      JWT_ISSUER: ${JWT_ISSUER:-withdrawal-service}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-withdrawal-api}
+      JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-900}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      FRANKFURTER_BASE_URL: ${FRANKFURTER_BASE_URL:-https://api.frankfurter.dev/v1}
+      EXCHANGE_RATE_TIMEOUT_MS: ${EXCHANGE_RATE_TIMEOUT_MS:-3000}
+      EXCHANGE_RATE_RETRIES: ${EXCHANGE_RATE_RETRIES:-1}
+      EXCHANGE_RATE_MAX_AGE_DAYS: ${EXCHANGE_RATE_MAX_AGE_DAYS:-4}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Isolated, throwaway database for tests (tmpfs: nothing persists between runs).
+  db-test:
+    image: postgres:16-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: withdrawal_test
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d withdrawal_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  test:
+    build:
+      context: .
+      target: test
+    profiles: ["test"]
+    environment:
+      NODE_ENV: test
+      LOG_LEVEL: silent
+      DATABASE_URL: postgres://test:test@db-test:5432/withdrawal_test
+      JWT_SECRET: test-only-jwt-secret-not-for-production-0123456789
+      JWT_ISSUER: withdrawal-service
+      JWT_AUDIENCE: withdrawal-api
+      JWT_EXPIRES_IN_SECONDS: 900
+      BCRYPT_ROUNDS: 4
+      # Tests mock the provider; this URL must never be reached.
+      FRANKFURTER_BASE_URL: http://exchange-rate-provider.invalid
+    depends_on:
+      db-test:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,0 +1,22 @@
+# Development override: hot reload for the API.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# or set COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml in .env so plain
+# `docker compose up` uses it. Editing anything in src/ or sql/ restarts the server.
+
+services:
+  api:
+    build:
+      target: dev
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./src:/app/src:ro
+      - ./sql:/app/sql:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
